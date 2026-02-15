@@ -8,13 +8,13 @@ import random
 import pickle
 
 # -------------------------
-# Runtime Control (IMPORTANT)
+# Runtime Control
 # -------------------------
 START_TIME = time.time()
-MAX_RUNTIME = 240* 60  # 4hrs
+MAX_RUNTIME = 240 * 60  # 4 hours
 
 # -------------------------
-# Step 1: Authenticate YouTube (Token-based, Headless Safe)
+# Authenticate YouTube
 # -------------------------
 with open("youtube_token.pkl", "rb") as f:
     credentials = pickle.load(f)
@@ -22,21 +22,59 @@ with open("youtube_token.pkl", "rb") as f:
 youtube = build("youtube", "v3", credentials=credentials)
 
 # -------------------------
-# Step 2: Authenticate Google Sheets (Service Account)
+# Authenticate Google Sheets
 # -------------------------
-SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+SHEETS_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
 
 sheet_credentials = service_account.Credentials.from_service_account_file(
-    "credentials.json", scopes=SHEETS_SCOPES
+    "credentials.json",
+    scopes=SHEETS_SCOPES
 )
 
 sheets_service = build("sheets", "v4", credentials=sheet_credentials)
 
 SPREADSHEET_ID = "137DqmPMinL0hl2YGVNmi-wBl0uoz7keZu3ANUfOgG4A"
-SHEET_NAME = "PrayerRequests"
+
+# Automatically use current month as sheet name
+SHEET_NAME = datetime.now().strftime("%B %Y")
 
 # -------------------------
-# Step 3: Get Active Live Chat ID
+# Ensure Monthly Sheet Exists
+# -------------------------
+def ensure_sheet_exists():
+    try:
+        metadata = sheets_service.spreadsheets().get(
+            spreadsheetId=SPREADSHEET_ID
+        ).execute()
+
+        sheet_titles = [s["properties"]["title"] for s in metadata["sheets"]]
+
+        if SHEET_NAME not in sheet_titles:
+            print(f"Creating new sheet: {SHEET_NAME}")
+
+            sheets_service.spreadsheets().batchUpdate(
+                spreadsheetId=SPREADSHEET_ID,
+                body={
+                    "requests": [{
+                        "addSheet": {
+                            "properties": {
+                                "title": SHEET_NAME
+                            }
+                        }
+                    }]
+                }
+            ).execute()
+
+    except Exception as e:
+        print("Sheet creation error:", str(e))
+
+ensure_sheet_exists()
+
+# -------------------------
+# Get Active Live Chat ID
 # -------------------------
 try:
     response = youtube.liveBroadcasts().list(
@@ -53,7 +91,7 @@ try:
     print("Connected to YouTube Live Chat!")
 
 except HttpError as e:
-    print("Error connecting to YouTube:", e)
+    print("YouTube connection error:", e)
     exit()
 
 # -------------------------
@@ -63,7 +101,6 @@ def remove_emojis(text):
     return ''.join(c for c in text if not unicodedata.category(c).startswith('So'))
 
 def send_message(text):
-    clean_text = remove_emojis(text)
     try:
         youtube.liveChatMessages().insert(
             part="snippet",
@@ -72,14 +109,15 @@ def send_message(text):
                     "liveChatId": live_chat_id,
                     "type": "textMessageEvent",
                     "textMessageDetails": {
-                        "messageText": clean_text
+                        "messageText": remove_emojis(text)
                     }
                 }
             }
         ).execute()
-        print(f"Sent reply to chat")
+        print("Reply sent")
+
     except HttpError as e:
-        print("Error sending message:", e)
+        print("YouTube send error:", e)
 
 def add_to_sheet(name, request_text):
     values = [[
@@ -87,17 +125,20 @@ def add_to_sheet(name, request_text):
         name.strip(),
         remove_emojis(request_text).strip()
     ]]
+
     try:
-        sheets_service.spreadsheets().values().append(
+        result = sheets_service.spreadsheets().values().append(
             spreadsheetId=SPREADSHEET_ID,
             range=f"{SHEET_NAME}!A:C",
             valueInputOption="RAW",
             insertDataOption="INSERT_ROWS",
             body={"values": values}
         ).execute()
-        print(f"Saved prayer request from {name}")
-    except HttpError as e:
-        print("Sheets error:", e)
+
+        print("Sheet write success:", result)
+
+    except Exception as e:
+        print("Sheets error:", str(e))
 
 def is_prayer_request(text):
     keywords = [
@@ -105,14 +146,13 @@ def is_prayer_request(text):
         "prarthna", "prayer", "prathna", "dua",
         "praying", "need prayer"
     ]
-    text = text.lower()
-    return any(k in text for k in keywords)
+    return any(k in text.lower() for k in keywords)
 
 # -------------------------
 # Response Templates
 # -------------------------
 RESPONSE_TEMPLATES = [
-    "@{name} Thank you for sending in your prayer request. We are praying for you. By His stripes, healing is already provided.",
+    "@{name} Thank you for sending your prayer request. We are praying for you.",
     "@{name} Thank you for sharing your prayer need. Stay encouraged!",
     "@{name} We’ve received your prayer request. The Lord hears and answers prayer."
 ]
@@ -121,6 +161,7 @@ RESPONSE_TEMPLATES = [
 # Listen to Chat
 # -------------------------
 print("Listening for live chat messages...")
+
 next_page_token = None
 processed_message_ids = set()
 BOT_NAMES = ["evangelistrambabu", "evangelistrambaburambo"]
@@ -135,8 +176,10 @@ while time.time() - START_TIME < MAX_RUNTIME:
 
         for message in response.get("items", []):
             msg_id = message["id"]
+
             if msg_id in processed_message_ids:
                 continue
+
             processed_message_ids.add(msg_id)
 
             if "displayMessage" not in message["snippet"]:
@@ -149,7 +192,9 @@ while time.time() - START_TIME < MAX_RUNTIME:
                 continue
 
             if is_prayer_request(text):
+                print(f"Prayer request detected from {author}")
                 add_to_sheet(author, text)
+
                 reply = random.choice(RESPONSE_TEMPLATES).format(name=author)
                 send_message(reply)
 
