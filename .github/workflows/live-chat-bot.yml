@@ -2,33 +2,28 @@ name: YouTube Live Chat Bot
 
 on:
   schedule:
-  - cron: "0 4 * * 0"
-   # Every Sunday at 9:30 AM IST
+   - cron: "0 4 * * 0" //Every Sunday at 9:30AM IST (4:00 AM UTC)
+
   workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+  steps:
+  - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+  - name: Decode credentials
+    run: |
+      echo "${{ secrets.GOOGLE_CREDENTIALS_BASE64 }}" | base64 --decode > credentials.json
 
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+  - name: Set up Python
+    uses: actions/setup-python@v5
+    with:
+      python-version: "3.11"
 
-      - name: Restore credentials
-        run: |
-          echo "${{ secrets.SHEETS_CREDENTIALS_JSON }}" > credentials.json
-          echo "${{ secrets.YOUTUBE_TOKEN_PKL }}" | base64 --decode > youtube_token.pkl
+  - name: Install dependencies
+    run: pip install -r requirements.txt
 
-      - name: Run YouTube Live Chat Bot
-        run: |
-          python live_chat_bot.py
+  - name: Run bot
+    run: python live_chat_bot.py
