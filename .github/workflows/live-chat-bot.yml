@@ -2,7 +2,7 @@ name: YouTube Live Chat Bot
 
 on:
   schedule:
-    - cron: "0 4 * * 0"  # Every Sunday at 9:30AM IST (4:00 AM UTC)
+    - cron: "0 4 * * 0" 
   workflow_dispatch:
 
 jobs:
