@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cambridge Institute of Technology</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Utility bar -->
+    <div class="utility-bar">
+        <a href="#">NAAC</a> |
+        <a href="#">AICTE</a> |
+        <a href="#">Alumni</a> |
+        <a href="#">Library</a>
+    </div>
+    
+    <!-- Navigation -->
+    <nav class="main-nav">
+        <div class="logo">
+            <!-- placeholder for crest svg -->
+            <img src="assets/crest.svg" alt="CIT Logo" />
+            <span>Cambridge Institute of Technology</span>
+        </div>
+        <ul class="nav-links">
+            <li><a href="index.html" class="active">Home</a></li>
+            <li><a href="about.html">About Us</a></li>
+            <li><a href="academics.html">Academics</a></li>
+            <li><a href="campus-life.html">Campus Life</a></li>
+            <li><a href="admissions.html">Admissions</a></li>
+            <li><a href="placements.html">Placements</a></li>
+            <li><a href="research.html">Research</a></li>
+            <li><a href="contact.html">Contact</a></li>
+        </ul>
+        <div class="hamburger">
+            <span></span><span></span><span></span>
+        </div>
+    </nav>
+    
+    <!-- Mobile Sidebar -->
+    <div class="sidebar">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="about.html">About Us</a></li>
+            <li><a href="academics.html">Academics</a></li>
+            <li><a href="campus-life.html">Campus Life</a></li>
+            <li><a href="admissions.html">Admissions</a></li>
+            <li><a href="placements.html">Placements</a></li>
+            <li><a href="research.html">Research</a></li>
+            <li><a href="contact.html">Contact</a></li>
+        </ul>
+    </div>
+    
+    <!-- Hero Section -->
+    <header class="hero">
+        <video autoplay muted loop playsinline class="hero-bg">
+            <source src="assets/hero.mp4" type="video/mp4">
+        </video>
+        <div class="hero-overlay"></div>
+        <!-- gradient blob backgrounds -->
+        <div class="blob" style="width:300px;height:300px;background:#0A1628;top:10%;left:20%;"></div>
+        <div class="blob" style="width:400px;height:400px;background:#00D4FF;top:50%;left:70%;"></div>
+        <div class="blob" style="width:500px;height:500px;background:#F5A623;top:80%;left:40%;"></div>
+        <div class="hero-content">
+            <div class="badge">STATE-OF-THE-ART</div>
+            <h1 class="hero-title">INFRASTRUCTURE</h1>
+            <div class="scroll-indicator">
+                <span></span>
+            </div>
+        </div>
+        <canvas id="particle-canvas"></canvas>
+    </header>
+    
+    <!-- Stats row -->
+    <section class="stats" id="stats">
+        <div class="stat" data-target="25">0+</div>
+        <div class="stat" data-target="10000">0+</div>
+        <div class="stat" data-target="95">0%+</div>
+        <div class="stat" data-target="A+">NAAC A+</div>
+        <div class="stat-labels">
+            <span>Years</span>
+            <span>Alumni</span>
+            <span>Placement</span>
+            <span>Accreditation</span>
+        </div>
+    </section>
+    
+    <!-- Marquee -->
+    <section class="marquee">
+        <div class="marquee-content">
+            <span>NAAC A+ &nbsp;&nbsp;&bull;&nbsp;&nbsp; NBA &nbsp;&nbsp;&bull;&nbsp;&nbsp; SIRO &nbsp;&nbsp;&bull;&nbsp;&nbsp; AICTE</span>
+        </div>
+    </section>
+    
+    <!-- Why CIT -->
+    <section class="why-cit">
+        <h2 class="section-title">Why CIT?</h2>
+        <div class="cards-grid">
+            <div class="card">
+                <div class="icon">🎓</div>
+                <h3>Expert Faculty</h3>
+                <p>Learn from industry leaders and researchers.</p>
+            </div>
+            <div class="card">
+                <div class="icon">🏛️</div>
+                <h3>Modern Campus</h3>
+                <p>State-of-the-art facilities for learning & research.</p>
+            </div>
+            <div class="card">
+                <div class="icon">💡</div>
+                <h3>Innovation Hub</h3>
+                <p>Incubators and labs empower student startups.</p>
+            </div>
+            <div class="card">
+                <div class="icon">🌐</div>
+                <h3>Global Exposure</h3>
+                <p>Exchange programs with top universities worldwide.</p>
+            </div>
+        </div>
+    </section>
+    
+    <!-- News & Events -->
+    <section class="news-events">
+        <h2 class="section-title">Latest News &amp; Events</h2>
+        <div class="carousel" id="news-carousel">
+            <div class="event-card">News 1</div>
+            <div class="event-card">News 2</div>
+            <div class="event-card">News 3</div>
+            <div class="event-card">News 4</div>
+        </div>
+    </section>
+    
+    <!-- Departments showcase -->
+    <section class="departments">
+        <h2 class="section-title">Departments</h2>
+        <div class="dept-grid">
+            <div class="dept-card">Computer Science</div>
+            <div class="dept-card">Mechanical</div>
+            <div class="dept-card">Electrical</div>
+            <div class="dept-card">Civil</div>
+        </div>
+    </section>
+    
+    <!-- Testimonials -->
+    <section class="testimonials">
+        <h2 class="section-title">What Our Alumni Say</h2>
+        <div class="testimonial-cards">
+            <div class="testimonial">"CIT changed my life"</div>
+            <div class="testimonial">"Best education and mentorship"</div>
+            <div class="testimonial">"Forever grateful"</div>
+        </div>
+    </section>
+    
+    <!-- CTA banner -->
+    <section class="cta-banner">
+        <h2>Begin Your Journey</h2>
+        <button class="btn cta-btn magnetic">Apply Now</button>
+    </section>
+    
+    <!-- Footer -->
+    <footer>
+        <div class="footer-top">
+            <div class="col logo-col">
+                <img src="assets/crest.svg" alt="CIT Logo" />
+                <p>Empowering engineers since 1995</p>
+            </div>
+            <div class="col quick-links">
+                <h4>Quick Links</h4>
+                <ul>
+                    <li><a href="about.html">About Us</a></li>
+                    <li><a href="admissions.html">Admissions</a></li>
+                    <li><a href="placements.html">Placements</a></li>
+                </ul>
+            </div>
+            <div class="col departments-col">
+                <h4>Departments</h4>
+                <ul>
+                    <li><a href="#">CSE</a></li>
+                    <li><a href="#">EEE</a></li>
+                </ul>
+            </div>
+            <div class="col contact-col">
+                <h4>Contact</h4>
+                <p>123 CIT Road, Bengaluru</p>
+                <p>+91 80 1234 5678</p>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <span>&copy; 2026 Cambridge Institute of Technology</span>
+            <span><a href="#">Privacy Policy</a> | <a href="#">Terms</a></span>
+        </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+</body>
+</html>
