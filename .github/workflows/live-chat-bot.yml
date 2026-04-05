@@ -1,27 +1,33 @@
 name: YouTube Live Chat Bot
+
 on:
   schedule:
-    - cron: "0 4 * * 0"        # Every Sunday at 9:30 AM IST (4:00 AM UTC)
-    - cron: "30 4 3 4 *"       # April 3 at 9:30 AM IST (4:30 AM UTC)
-    - cron: "30 4 4 4 *"       # April 4 at 9:30 AM IST (4:30 AM UTC)
-    - cron: "30 4 5 4 *"       # April 5 at 9:30 AM IST (4:30 AM UTC)
-  workflow_dispatch:
+    - cron: "0 4 * * 0"   # Every Sunday at 9:30 AM IST (4:00 AM UTC)
+  workflow_dispatch:       # Allow manual trigger as backup
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 260   # Slightly above MAX_RUNTIME (4hrs) — kills hung jobs
+
     steps:
       - uses: actions/checkout@v4
+
       - name: Decode credentials
         run: |
           echo "${{ secrets.GOOGLE_CREDENTIALS_BASE64 }}" | base64 --decode > credentials.json
+
       - name: Decode YouTube token
         run: |
           echo "${{ secrets.YOUTUBE_TOKEN_BASE64 }}" | base64 --decode > youtube_token.pkl
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install dependencies
         run: pip install -r requirements.txt
+
       - name: Run bot
         run: python live_chat_bot.py
