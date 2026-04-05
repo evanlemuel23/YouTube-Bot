@@ -1,11 +1,15 @@
+import sys
+import time
+import random
+import pickle
+import unicodedata
+from datetime import datetime
+
+import google.auth.exceptions
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from google.oauth2 import service_account
-from datetime import datetime
-import time
-import unicodedata
-import random
-import pickle
 
 # -------------------------
 # Runtime Control
@@ -14,10 +18,20 @@ START_TIME = time.time()
 MAX_RUNTIME = 240 * 60  # 4 hours
 
 # -------------------------
-# Authenticate YouTube
+# Authenticate YouTube (with token refresh)
 # -------------------------
 with open("youtube_token.pkl", "rb") as f:
     credentials = pickle.load(f)
+
+if credentials.expired and credentials.refresh_token:
+    print("Token expired — refreshing...")
+    credentials.refresh(Request())
+    with open("youtube_token.pkl", "wb") as f:
+        pickle.dump(credentials, f)
+    print("Token refreshed successfully.")
+elif not credentials.valid:
+    print("Token is invalid and cannot be refreshed. Please re-authenticate.")
+    sys.exit(1)
 
 youtube = build("youtube", "v3", credentials=credentials)
 
@@ -54,7 +68,6 @@ def ensure_sheet_exists():
 
         if SHEET_NAME not in sheet_titles:
             print(f"Creating new sheet: {SHEET_NAME}")
-
             sheets_service.spreadsheets().batchUpdate(
                 spreadsheetId=SPREADSHEET_ID,
                 body={
@@ -85,14 +98,14 @@ try:
 
     if not response["items"]:
         print("No active live broadcast found.")
-        exit()
+        sys.exit(1)  # ← Marks job as FAILED so GitHub notifies you
 
     live_chat_id = response["items"][0]["snippet"]["liveChatId"]
     print("Connected to YouTube Live Chat!")
 
 except HttpError as e:
     print("YouTube connection error:", e)
-    exit()
+    sys.exit(1)
 
 # -------------------------
 # Helper Functions
@@ -197,6 +210,10 @@ while time.time() - START_TIME < MAX_RUNTIME:
 
             processed_message_ids.add(msg_id)
 
+            # Keep memory bounded — cap at 5000 IDs, retain last 2000
+            if len(processed_message_ids) > 5000:
+                processed_message_ids = set(list(processed_message_ids)[-2000:])
+
             if "displayMessage" not in message["snippet"]:
                 continue
 
@@ -209,7 +226,6 @@ while time.time() - START_TIME < MAX_RUNTIME:
             if is_prayer_request(text):
                 print(f"Prayer request detected from {author}")
                 add_to_sheet(author, text)
-
                 reply = random.choice(RESPONSE_TEMPLATES).format(name=author)
                 send_message(reply)
 
@@ -222,6 +238,18 @@ while time.time() - START_TIME < MAX_RUNTIME:
 
     except HttpError as e:
         print("YouTube API error:", e)
+        time.sleep(5)
+
+    except google.auth.exceptions.TransportError as e:
+        print("Auth/transport error:", e)
+        time.sleep(10)
+
+    except google.auth.exceptions.RefreshError as e:
+        print("Token refresh failed during run:", e)
+        sys.exit(1)
+
+    except Exception as e:
+        print("Unexpected error:", e)
         time.sleep(5)
 
 print("Bot execution completed.")
