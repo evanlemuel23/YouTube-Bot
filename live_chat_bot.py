@@ -157,9 +157,10 @@ def is_prayer_request(text):
     keywords = [
         "pray for", "prayer request", "please pray",
         "prarthna", "prayer", "prathna", "dua",
-        "praying", "need prayer"
+        "praying", "need prayer", "pray"
     ]
-    return any(k in text.lower() for k in keywords)
+    text_lower = text.lower()
+    return any(k in text_lower for k in keywords)
 
 def is_address_request(text):
     keywords = [
