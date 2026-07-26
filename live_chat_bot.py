@@ -1,4 +1,4 @@
-import sys
+\import sys
 import re
 import time
 import random
@@ -198,7 +198,7 @@ def add_offering(name: str, message: str, amount: str) -> None:
 
 def is_prayer_request(text: str) -> bool:
     keywords = [
-        "pray for", "prayer request", "please pray",
+        "pray for"," pry for me" , "pry me", "prayer request", "please pray",
         "prarthna", "prayer", "prathna", "dua",
         "praying", "need prayer", "pray",
     ]
