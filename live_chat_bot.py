@@ -99,6 +99,10 @@ BOT_NAMES = {
 
 BOT_CHANNEL_IDS = set()
 
+# IDs returned when this bot posts a reply. These are always ignored if they
+# appear again in the live-chat polling response.
+SELF_SENT_MESSAGE_IDS = set()
+
 
 def normalize_author(name):
     """Normalize a YouTube display name for identity comparison."""
@@ -240,6 +244,14 @@ def is_bot_message(author_details):
     Then uses normalized display name as a backup.
     """
 
+    # YouTube explicitly marks messages written by the channel owner.
+    # This catches manual messages typed by the channel owner as well as bot replies.
+    if author_details.get("isChatOwner") is True:
+        return True
+
+    # Also ignore message IDs returned by our own liveChatMessages.insert calls.
+    # (The ID check is performed in process_message as well.)
+
     channel_id = author_details.get("channelId")
 
     # Most reliable check: YouTube channel ID
@@ -266,7 +278,7 @@ def send_message(text):
         if elapsed < SEND_INTERVAL_SECONDS:
             time.sleep(SEND_INTERVAL_SECONDS - elapsed)
 
-        youtube.liveChatMessages().insert(
+        response = youtube.liveChatMessages().insert(
             part="snippet",
             body={
                 "snippet": {
@@ -278,6 +290,12 @@ def send_message(text):
                 }
             },
         ).execute()
+
+        # Remember the exact message ID returned by YouTube so our own
+        # automated replies can never be processed as incoming requests.
+        sent_message_id = response.get("id")
+        if sent_message_id:
+            SELF_SENT_MESSAGE_IDS.add(sent_message_id)
 
         last_send_time = time.monotonic()
 
@@ -583,7 +601,12 @@ def process_message(message):
     if not msg_id:
         return
 
-    # Ignore bot's own messages
+    # Ignore an exact message ID created by this bot.
+    if msg_id in SELF_SENT_MESSAGE_IDS:
+        print("[SKIPPED] Own sent reply:", msg_id)
+        return
+
+    # Ignore messages sent by the channel owner / bot identity.
     if is_bot_message(author_details):
         print("[SKIPPED] Own bot message:", msg_id)
         return
