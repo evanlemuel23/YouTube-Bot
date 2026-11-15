@@ -5,6 +5,7 @@ import time
 import random
 import pickle
 import unicodedata
+from collections import OrderedDict
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -16,16 +17,31 @@ from google.oauth2 import service_account
 
 
 # =============================================================================
-# 1. RUNTIME CONTROL
+# 1. CONFIGURATION
 # =============================================================================
 
 START_TIME = time.time()
-MAX_RUNTIME = 240 * 60  # 4 hours
+MAX_RUNTIME = 240 * 60
 
 IST = ZoneInfo("Asia/Kolkata")
 
 REPLY_COOLDOWN_SECONDS = 60
 SEND_INTERVAL_SECONDS = 2
+MAX_TRACKED_IDS = 5000
+
+YOUTUBE_TOKEN_FILE = "youtube_token.pkl"
+GOOGLE_CREDENTIALS_FILE = "credentials.json"
+
+SPREADSHEET_ID = "137DqmPMinL0hl2YGVNmi-wBl0uoz7keZu3ANUfOgG4A"
+
+BOT_NAMES = {
+    "apostlerambaburambo",
+    "evangelistrambabu",
+    "evangelistrambaburambo",
+}
+
+BOT_CHANNEL_IDS = set()
+SELF_SENT_MESSAGE_IDS = OrderedDict()
 
 last_replies = {}
 last_send_time = 0
@@ -35,27 +51,33 @@ last_send_time = 0
 # 2. AUTHENTICATE — YOUTUBE
 # =============================================================================
 
-with open("youtube_token.pkl", "rb") as f:
-    youtube_credentials = pickle.load(f)
+try:
+    with open(YOUTUBE_TOKEN_FILE, "rb") as f:
+        youtube_credentials = pickle.load(f)
+except FileNotFoundError:
+    print(f"ERROR: {YOUTUBE_TOKEN_FILE} was not found.")
+    sys.exit(1)
 
 if youtube_credentials.expired and youtube_credentials.refresh_token:
-    print("Token expired — refreshing...")
-
-    youtube_credentials.refresh(Request())
-
-    with open("youtube_token.pkl", "wb") as f:
-        pickle.dump(youtube_credentials, f)
-
-    print("Token refreshed successfully.")
+    print("YouTube token expired — refreshing...")
+    try:
+        youtube_credentials.refresh(Request())
+        with open(YOUTUBE_TOKEN_FILE, "wb") as f:
+            pickle.dump(youtube_credentials, f)
+        print("YouTube token refreshed successfully.")
+    except Exception as e:
+        print("ERROR: Could not refresh YouTube token:", repr(e))
+        sys.exit(1)
 
 elif not youtube_credentials.valid:
-    print("YouTube token is invalid. Please re-authenticate.")
+    print("ERROR: YouTube token is invalid. Re-authenticate.")
     sys.exit(1)
 
 youtube = build(
     "youtube",
     "v3",
-    credentials=youtube_credentials
+    credentials=youtube_credentials,
+    cache_discovery=False,
 )
 
 
@@ -68,18 +90,21 @@ SHEETS_SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-sheet_credentials = service_account.Credentials.from_service_account_file(
-    "credentials.json",
-    scopes=SHEETS_SCOPES,
-)
+try:
+    sheet_credentials = service_account.Credentials.from_service_account_file(
+        GOOGLE_CREDENTIALS_FILE,
+        scopes=SHEETS_SCOPES,
+    )
+except FileNotFoundError:
+    print(f"ERROR: {GOOGLE_CREDENTIALS_FILE} was not found.")
+    sys.exit(1)
 
 sheets_service = build(
     "sheets",
     "v4",
-    credentials=sheet_credentials
+    credentials=sheet_credentials,
+    cache_discovery=False,
 )
-
-SPREADSHEET_ID = "137DqmPMinL0hl2YGVNmi-wBl0uoz7keZu3ANUfOgG4A"
 
 SHEET_NAME = datetime.now(IST).strftime("%B %Y")
 TESTIMONY_SHEET_NAME = f"Testimonies - {SHEET_NAME}"
@@ -87,80 +112,128 @@ OFFERING_SHEET_NAME = f"Offerings - {SHEET_NAME}"
 
 
 # =============================================================================
-# 4. BOT IDENTITY
+# 4. BOT IDENTITY AND MESSAGE FILTERS
 # =============================================================================
 
-# Normalized usernames. Spaces and @ symbols are removed before comparison.
-BOT_NAMES = {
-    "apostlerambaburambo",
-    "evangelistrambabu",
-    "evangelistrambaburambo",
-}
-
-BOT_CHANNEL_IDS = set()
-
-# IDs returned when this bot posts a reply. These are always ignored if they
-# appear again in the live-chat polling response.
-SELF_SENT_MESSAGE_IDS = set()
-
-
 def normalize_author(name):
-    """Normalize a YouTube display name for identity comparison."""
-    return re.sub(r"[^a-z0-9]", "", name.casefold())
+    return re.sub(r"[^a-z0-9]", "", str(name).casefold())
 
 
 def get_bot_channel_identity():
-    """
-    Retrieve the authenticated YouTube channel ID.
-    This is more reliable than checking the display name.
-    """
-
     global BOT_CHANNEL_IDS
 
     try:
         response = youtube.channels().list(
-            part="id",
-            mine=True
+            part="id,snippet",
+            mine=True,
         ).execute()
 
         BOT_CHANNEL_IDS = {
-            channel["id"]
-            for channel in response.get("items", [])
+            item.get("id")
+            for item in response.get("items", [])
+            if item.get("id")
         }
 
         if BOT_CHANNEL_IDS:
-            print("Bot channel identity verified.")
-            print("Authenticated channel IDs:", BOT_CHANNEL_IDS)
+            print(
+                "[IDENTITY] Authenticated YouTube channel ID(s):",
+                ", ".join(sorted(BOT_CHANNEL_IDS))
+            )
         else:
-            print("WARNING: No authenticated channel ID returned.")
+            print("[WARNING] No authenticated channel ID returned.")
 
     except HttpError as e:
-        print("WARNING: Could not retrieve bot channel ID:", e)
-        print("Username-based identity checking will be used.")
+        print("[WARNING] Could not retrieve channel ID:", e)
+
+
+def is_bot_message(author_details):
+
+    if author_details.get("isChatOwner") is True:
+        return True
+
+    channel_id = author_details.get("channelId", "")
+
+    if channel_id and channel_id in BOT_CHANNEL_IDS:
+        return True
+
+    display_name = author_details.get("displayName", "")
+
+    if normalize_author(display_name) in BOT_NAMES:
+        return True
+
+    return False
+
+
+def remember_self_message(message_id):
+
+    if not message_id:
+        return
+
+    SELF_SENT_MESSAGE_IDS[message_id] = True
+    SELF_SENT_MESSAGE_IDS.move_to_end(message_id)
+
+    while len(SELF_SENT_MESSAGE_IDS) > MAX_TRACKED_IDS:
+        SELF_SENT_MESSAGE_IDS.popitem(last=False)
+
+
+def normalize_message(text):
+
+    text = unicodedata.normalize("NFKC", str(text)).casefold()
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"^(?:@\S+\s*)+", "", text)
+
+    return text
+
+
+BOT_REPLY_SIGNATURES = (
+    "thank you for sharing your prayer need. stay encouraged!",
+    "we've received your prayer request. the lord hears and answers prayer.",
+    "thank you for sharing your prayer request. we are praying for you.",
+    "thank you for sending your prayer request. we are praying for you.",
+    "praise god! thank you for sharing your testimony.",
+    "hallelujah! we rejoice with you.",
+    "amen! thank you for sharing. god's power is still at work!",
+    "god bless you for your heart to give!",
+    "amen! thank you for your generosity.",
+    "the lord loves a cheerful giver!",
+    "to give your offering or sow a seed online",
+    "our church address:",
+)
+
+
+def is_bot_reply_text(text):
+
+    normalized = normalize_message(text)
+
+    return any(
+        signature in normalized
+        for signature in BOT_REPLY_SIGNATURES
+    )
 
 
 get_bot_channel_identity()
 
 
 # =============================================================================
-# 5. SHEET SETUP
+# 5. GOOGLE SHEETS SETUP
 # =============================================================================
 
 def ensure_sheet_exists(title):
-    """Create a sheet tab if it does not already exist."""
 
     try:
         metadata = sheets_service.spreadsheets().get(
-            spreadsheetId=SPREADSHEET_ID
+            spreadsheetId=SPREADSHEET_ID,
+            fields="sheets.properties.title",
         ).execute()
 
-        sheet_titles = [
+        existing_titles = {
             sheet["properties"]["title"]
             for sheet in metadata.get("sheets", [])
-        ]
+        }
 
-        if title not in sheet_titles:
-            print(f"Creating new sheet: {title}")
+        if title not in existing_titles:
+
+            print(f"[SHEETS] Creating sheet: {title}")
 
             sheets_service.spreadsheets().batchUpdate(
                 spreadsheetId=SPREADSHEET_ID,
@@ -168,17 +241,19 @@ def ensure_sheet_exists(title):
                     "requests": [
                         {
                             "addSheet": {
-                                "properties": {
-                                    "title": title
-                                }
+                                "properties": {"title": title}
                             }
                         }
                     ]
-                }
+                },
             ).execute()
 
     except Exception as e:
-        print(f"Sheet creation error for '{title}': {e}")
+        print(
+            f"[SHEETS ERROR] Could not ensure sheet '{title}':",
+            repr(e)
+        )
+        raise
 
 
 ensure_sheet_exists(SHEET_NAME)
@@ -191,88 +266,87 @@ ensure_sheet_exists(OFFERING_SHEET_NAME)
 # =============================================================================
 
 try:
+
     broadcast_response = youtube.liveBroadcasts().list(
         part="snippet",
         broadcastStatus="active",
         broadcastType="all",
+        maxResults=5,
     ).execute()
 
-    if not broadcast_response.get("items"):
-        print("No active live broadcast found.")
+    active_broadcasts = broadcast_response.get("items", [])
+
+    if not active_broadcasts:
+        print("No active YouTube live broadcast found.")
         sys.exit(1)
 
     live_chat_id = (
-        broadcast_response["items"][0]["snippet"]["liveChatId"]
+        active_broadcasts[0]
+        .get("snippet", {})
+        .get("liveChatId")
     )
 
-    print("Connected to YouTube Live Chat!")
+    if not live_chat_id:
+        print("ERROR: Active broadcast has no liveChatId.")
+        sys.exit(1)
+
+    print("[YOUTUBE] Connected to active Live Chat.")
 
 except HttpError as e:
-    print("YouTube connection error:", e)
+    print("[YOUTUBE ERROR] Could not connect:", e)
     sys.exit(1)
 
 
 # =============================================================================
-# 7. UTILITY FUNCTIONS
+# 7. GENERAL UTILITIES
 # =============================================================================
 
 def remove_emojis(text):
-    """Remove emoji and symbol characters."""
 
     return "".join(
         char
-        for char in text
+        for char in str(text)
         if not unicodedata.category(char).startswith("So")
     )
 
 
 def format_mention(name):
-    """
-    Format a YouTube username with exactly one leading @.
-    """
 
-    clean_name = remove_emojis(name).strip().lstrip("@").strip()
+    clean_name = remove_emojis(name).strip()
+    clean_name = clean_name.lstrip("@").strip()
 
     return f"@{clean_name}" if clean_name else ""
 
 
-def is_bot_message(author_details):
-    """
-    Identify messages sent by the bot itself.
+def timestamp():
 
-    First checks the authenticated channel ID.
-    Then uses normalized display name as a backup.
-    """
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
-    # YouTube explicitly marks messages written by the channel owner.
-    # This catches manual messages typed by the channel owner as well as bot replies.
-    if author_details.get("isChatOwner") is True:
-        return True
 
-    # Also ignore message IDs returned by our own liveChatMessages.insert calls.
-    # (The ID check is performed in process_message as well.)
+def extract_amount(text):
 
-    channel_id = author_details.get("channelId")
+    match = re.search(
+        r"(?:rs\.?|inr|rupees?)?\s*(\d[\d,]*(?:\.\d{1,2})?)",
+        text,
+        re.IGNORECASE,
+    )
 
-    # Most reliable check: YouTube channel ID
-    if channel_id and channel_id in BOT_CHANNEL_IDS:
-        return True
+    return (
+        match.group(1).replace(",", "")
+        if match else "Not specified"
+    )
 
-    # Backup check: normalized username
-    display_name = author_details.get("displayName", "")
 
-    if normalize_author(display_name) in BOT_NAMES:
-        return True
-
-    return False
-
+# =============================================================================
+# 8. SEND YOUTUBE CHAT REPLIES
+# =============================================================================
 
 def send_message(text):
-    """Send a message to YouTube Live Chat with rate limiting."""
 
     global last_send_time
 
     try:
+
         elapsed = time.monotonic() - last_send_time
 
         if elapsed < SEND_INTERVAL_SECONDS:
@@ -291,95 +365,106 @@ def send_message(text):
             },
         ).execute()
 
-        # Remember the exact message ID returned by YouTube so our own
-        # automated replies can never be processed as incoming requests.
-        sent_message_id = response.get("id")
-        if sent_message_id:
-            SELF_SENT_MESSAGE_IDS.add(sent_message_id)
+        sent_id = response.get("id")
+
+        remember_self_message(sent_id)
 
         last_send_time = time.monotonic()
 
-        print("[SENT]", text)
+        print("[SENT]", text, "| message ID:", sent_id)
 
     except HttpError as e:
-        print("YouTube send error:", e)
+        print("[YOUTUBE SEND ERROR]", e)
 
-
-def extract_amount(text):
-    """Extract a numeric amount from a message."""
-
-    match = re.search(
-        r"(?:rs\.?|inr|rupees?)?\s*(\d[\d,]*(?:\.\d{1,2})?)",
-        text,
-        re.IGNORECASE,
-    )
-
-    return (
-        match.group(1).replace(",", "")
-        if match
-        else "Not specified"
-    )
-
-
-def timestamp():
-    """Return the current Indian Standard Time."""
-
-    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception as e:
+        print("[SEND ERROR]", repr(e))
 
 
 # =============================================================================
-# 8. GOOGLE SHEETS — WRITE FUNCTIONS
+# 9. GOOGLE SHEETS WRITE FUNCTIONS
 # =============================================================================
 
 def append_rows(sheet_name, values):
-    """Append data to a Google Sheets tab."""
+
+    if not values:
+        return False
 
     try:
-        col_end = chr(ord("A") + len(values[0]) - 1)
+
+        last_column = chr(ord("A") + len(values[0]) - 1)
 
         result = sheets_service.spreadsheets().values().append(
             spreadsheetId=SPREADSHEET_ID,
-            range=f"'{sheet_name}'!A:{col_end}",
+            range=f"'{sheet_name}'!A:{last_column}",
             valueInputOption="RAW",
             insertDataOption="INSERT_ROWS",
             body={"values": values},
         ).execute()
 
-        print(f"[{sheet_name}] Write successful.")
+        print(
+            f"[SHEETS SUCCESS] {sheet_name}: "
+            f"{result.get('updates', {}).get('updatedRows', 0)} row(s) appended."
+        )
+
+        return True
 
     except Exception as e:
-        print(f"[{sheet_name}] Write error:", e)
+
+        print(
+            f"[SHEETS ERROR] Failed writing to '{sheet_name}':",
+            repr(e)
+        )
+
+        return False
 
 
 def add_prayer_request(name, message):
-    """Columns: Timestamp | Name | Message"""
 
-    append_rows(
+    name = str(name).strip()
+    message = remove_emojis(message).strip()
+
+    if not name or not message:
+        print("[PRAYER NOT SAVED] Missing viewer name or message.")
+        return False
+
+    return append_rows(
         SHEET_NAME,
-        [[timestamp(), name.strip(), remove_emojis(message).strip()]]
+        [[timestamp(), name, message]],
     )
 
 
 def add_testimony(name, message):
-    """Columns: Timestamp | Name | Testimony"""
 
-    append_rows(
+    name = str(name).strip()
+    message = remove_emojis(message).strip()
+
+    if not name or not message:
+        print("[TESTIMONY NOT SAVED] Missing viewer name or message.")
+        return False
+
+    return append_rows(
         TESTIMONY_SHEET_NAME,
-        [[timestamp(), name.strip(), remove_emojis(message).strip()]]
+        [[timestamp(), name, message]],
     )
 
 
 def add_offering(name, message, amount):
-    """Columns: Timestamp | Name | Message | Amount"""
 
-    append_rows(
+    name = str(name).strip()
+    message = remove_emojis(message).strip()
+
+    if not name or not message:
+        print("[OFFERING NOT SAVED] Missing viewer name or message.")
+        return False
+
+    return append_rows(
         OFFERING_SHEET_NAME,
-        [[timestamp(), name.strip(), remove_emojis(message).strip(), amount]]
+        [[timestamp(), name, message, amount]],
     )
 
 
 # =============================================================================
-# 9. MESSAGE DETECTION FUNCTIONS
+# 10. MESSAGE DETECTION
 # =============================================================================
 
 def is_prayer_request(text):
@@ -399,9 +484,9 @@ def is_prayer_request(text):
         "pray",
     ]
 
-    t = text.casefold()
+    lowered = text.casefold()
 
-    return any(keyword in t for keyword in keywords)
+    return any(keyword in lowered for keyword in keywords)
 
 
 def is_testimony(text):
@@ -432,9 +517,9 @@ def is_testimony(text):
         "share testimony",
     ]
 
-    t = text.casefold()
+    lowered = text.casefold()
 
-    return any(keyword in t for keyword in keywords)
+    return any(keyword in lowered for keyword in keywords)
 
 
 def is_offering(text):
@@ -466,9 +551,9 @@ def is_offering(text):
         "ready to offer",
     ]
 
-    t = text.casefold()
+    lowered = text.casefold()
 
-    return any(keyword in t for keyword in keywords)
+    return any(keyword in lowered for keyword in keywords)
 
 
 def is_giving_question(text):
@@ -484,9 +569,12 @@ def is_giving_question(text):
         r"(send|transfer) (money|funds|offering|tithe)",
     ]
 
-    t = text.casefold()
+    lowered = text.casefold()
 
-    return any(re.search(pattern, t) for pattern in patterns)
+    return any(
+        re.search(pattern, lowered)
+        for pattern in patterns
+    )
 
 
 def is_address_request(text):
@@ -502,13 +590,13 @@ def is_address_request(text):
         "where is church",
     ]
 
-    t = text.casefold()
+    lowered = text.casefold()
 
-    return any(keyword in t for keyword in keywords)
+    return any(keyword in lowered for keyword in keywords)
 
 
 # =============================================================================
-# 10. REPLY TEMPLATES
+# 11. REPLY TEMPLATES
 # =============================================================================
 
 RAZORPAY_LINK = "https://pages.razorpay.com/rwogiving"
@@ -519,13 +607,11 @@ CHURCH_ADDRESS = (
     "Kothanur, Bangalore - 560077, Karnataka"
 )
 
-
 PRAYER_REPLIES = [
     "{mention} Thank you for sharing your prayer need. Stay encouraged!",
     "{mention} We've received your prayer request. The Lord hears and answers prayer.",
     "{mention} Thank you for sharing your prayer request. We are praying for you.",
 ]
-
 
 TESTIMONY_REPLIES = [
     "{mention} Praise God! Thank you for sharing your testimony. To God be the glory!",
@@ -533,118 +619,115 @@ TESTIMONY_REPLIES = [
     "{mention} Amen! Thank you for sharing. God's power is still at work!",
 ]
 
-
 OFFERING_REPLIES = [
     f"{{mention}} God bless you for your heart to give! To sow online: {RAZORPAY_LINK}",
     f"{{mention}} Amen! Thank you for your generosity. You can give here: {RAZORPAY_LINK}",
     f"{{mention}} The Lord loves a cheerful giver! Give online here: {RAZORPAY_LINK}",
 ]
 
-
 GIVING_QUESTION_REPLY = (
     f"{{mention}} To give your offering or sow a seed online, "
     f"use this link: {RAZORPAY_LINK} — God bless you!"
 )
 
-
-ADDRESS_REPLY = (
-    f"{{mention}} Our church address: {CHURCH_ADDRESS}"
-)
+ADDRESS_REPLY = f"{{mention}} Our church address: {CHURCH_ADDRESS}"
 
 
 # =============================================================================
-# 11. COOLDOWN PROTECTION
+# 12. COOLDOWN
 # =============================================================================
 
 def is_on_cooldown(author_key, category):
-    """
-    Prevent repeated replies to the same user
-    for the same category within the cooldown period.
-    """
 
     key = (author_key, category)
+    previous = last_replies.get(key)
 
-    now = time.monotonic()
+    if previous is not None:
 
-    previous_reply = last_replies.get(key)
+        if time.monotonic() - previous < REPLY_COOLDOWN_SECONDS:
 
-    if previous_reply is not None:
-        elapsed = now - previous_reply
-
-        if elapsed < REPLY_COOLDOWN_SECONDS:
             print(
                 f"[COOLDOWN] Skipping {category} from {author_key}"
             )
+
             return True
 
     return False
 
 
 def record_reply(author_key, category):
-    """Record a successful reply for cooldown tracking."""
 
     last_replies[(author_key, category)] = time.monotonic()
 
 
 # =============================================================================
-# 12. MESSAGE PROCESSING
+# 13. PROCESS ONE CHAT MESSAGE
 # =============================================================================
 
 def process_message(message):
 
-    msg_id = message.get("id")
-
+    message_id = message.get("id")
     snippet = message.get("snippet", {})
     author_details = message.get("authorDetails", {})
 
-    # Ignore messages without a valid ID
-    if not msg_id:
+    if not message_id:
+        print("[SKIPPED] Message without ID.")
         return
 
-    # Ignore an exact message ID created by this bot.
-    if msg_id in SELF_SENT_MESSAGE_IDS:
-        print("[SKIPPED] Own sent reply:", msg_id)
+    # FILTER 1: Our own sent message IDs.
+    if message_id in SELF_SENT_MESSAGE_IDS:
+
+        print("[SKIPPED] Own sent message:", message_id)
         return
 
-    # Ignore messages sent by the channel owner / bot identity.
+    # FILTER 2: Channel owner / authenticated bot identity.
     if is_bot_message(author_details):
-        print("[SKIPPED] Own bot message:", msg_id)
+
+        print("[SKIPPED] Own/channel-owner message:", message_id)
         return
 
-    # Ignore messages without display text
-    if "displayMessage" not in snippet:
+    # Only normal text chat messages.
+    if snippet.get("type") != "textMessageEvent":
         return
 
+    raw_text = snippet.get("displayMessage", "")
+    text = remove_emojis(raw_text).strip()
+
+    if not text:
+        return
+
+    # FILTER 3: Known bot reply templates.
+    if is_bot_reply_text(text):
+
+        print("[SKIPPED] Bot reply text detected:", text)
+        return
+
+    # Retrieve viewer name.
     author = remove_emojis(
         author_details.get("displayName", "")
-    ).strip()
+    ).strip().lstrip("@").strip()
 
-    text = remove_emojis(
-        snippet.get("displayMessage", "")
-    ).strip()
+    channel_id = author_details.get("channelId", "").strip()
 
-    if not author or not text:
+    if not author and channel_id:
+        author = channel_id
+
+    if not author:
+
+        print(
+            "[SKIPPED] Missing viewer identity:",
+            message_id
+        )
+
         return
 
     mention = format_mention(author)
 
-    # Prefer channel ID as cooldown identity
-    author_key = (
-        author_details.get("channelId")
-        or normalize_author(author)
-    )
+    author_key = channel_id or normalize_author(author)
 
-    print(f"[MESSAGE] {author}: {text}")
+    print(f"[VIEWER MESSAGE] {author}: {text}")
 
-    # -------------------------------------------------------------------------
-    # DETECTION PRIORITY:
-    # 1. Prayer request
-    # 2. Testimony
-    # 3. Giving question
-    # 4. Offering
-    # 5. Address request
-    # -------------------------------------------------------------------------
-
+    # PRAYER REQUEST
     if is_prayer_request(text):
 
         category = "prayer"
@@ -652,17 +735,26 @@ def process_message(message):
         if is_on_cooldown(author_key, category):
             return
 
-        print("[PRAYER]", author, text)
+        print("[PRAYER REQUEST]", author, text)
 
-        add_prayer_request(author, text)
+        saved = add_prayer_request(author, text)
 
-        reply = random.choice(PRAYER_REPLIES).format(
-            mention=mention
-        )
+        if saved:
 
-        send_message(reply)
-        record_reply(author_key, category)
+            reply = random.choice(PRAYER_REPLIES).format(
+                mention=mention
+            )
 
+            send_message(reply)
+            record_reply(author_key, category)
+
+        else:
+
+            print(
+                "[PRAYER] Not replying because request was not saved."
+            )
+
+    # TESTIMONY
     elif is_testimony(text):
 
         category = "testimony"
@@ -672,15 +764,18 @@ def process_message(message):
 
         print("[TESTIMONY]", author, text)
 
-        add_testimony(author, text)
+        saved = add_testimony(author, text)
 
-        reply = random.choice(TESTIMONY_REPLIES).format(
-            mention=mention
-        )
+        if saved:
 
-        send_message(reply)
-        record_reply(author_key, category)
+            reply = random.choice(TESTIMONY_REPLIES).format(
+                mention=mention
+            )
 
+            send_message(reply)
+            record_reply(author_key, category)
+
+    # GIVING QUESTION
     elif is_giving_question(text):
 
         category = "giving_question"
@@ -690,13 +785,13 @@ def process_message(message):
 
         print("[HOW-TO-GIVE]", author, text)
 
-        reply = GIVING_QUESTION_REPLY.format(
-            mention=mention
+        send_message(
+            GIVING_QUESTION_REPLY.format(mention=mention)
         )
 
-        send_message(reply)
         record_reply(author_key, category)
 
+    # OFFERING
     elif is_offering(text):
 
         category = "offering"
@@ -708,15 +803,18 @@ def process_message(message):
 
         amount = extract_amount(text)
 
-        add_offering(author, text, amount)
+        saved = add_offering(author, text, amount)
 
-        reply = random.choice(OFFERING_REPLIES).format(
-            mention=mention
-        )
+        if saved:
 
-        send_message(reply)
-        record_reply(author_key, category)
+            reply = random.choice(OFFERING_REPLIES).format(
+                mention=mention
+            )
 
+            send_message(reply)
+            record_reply(author_key, category)
+
+    # CHURCH ADDRESS
     elif is_address_request(text):
 
         category = "address"
@@ -726,27 +824,32 @@ def process_message(message):
 
         print("[ADDRESS]", author, text)
 
-        reply = ADDRESS_REPLY.format(
-            mention=mention
+        send_message(
+            ADDRESS_REPLY.format(mention=mention)
         )
 
-        send_message(reply)
         record_reply(author_key, category)
 
 
 # =============================================================================
-# 13. MAIN LOOP — LISTEN TO YOUTUBE LIVE CHAT
+# 14. MAIN LOOP — READ YOUTUBE LIVE CHAT
 # =============================================================================
 
-print("=" * 60)
+print("=" * 68)
 print("YOUTUBE LIVE CHAT BOT STARTED")
-print("=" * 60)
+print("=" * 68)
+
+print("Prayer sheet:", SHEET_NAME)
+print("Testimony sheet:", TESTIMONY_SHEET_NAME)
+print("Offering sheet:", OFFERING_SHEET_NAME)
+
+print(
+    "Bot channel IDs:",
+    BOT_CHANNEL_IDS or "Not available — backup filters active"
+)
 
 next_page_token = None
-
-# Dictionary preserves insertion order, unlike an unordered set.
-processed_message_ids = {}
-
+processed_message_ids = OrderedDict()
 
 while time.time() - START_TIME < MAX_RUNTIME:
 
@@ -756,29 +859,26 @@ while time.time() - START_TIME < MAX_RUNTIME:
             liveChatId=live_chat_id,
             part="snippet,authorDetails",
             pageToken=next_page_token,
+            maxResults=200,
         ).execute()
 
         messages = chat_response.get("items", [])
 
         for message in messages:
 
-            msg_id = message.get("id")
+            message_id = message.get("id")
 
-            # Prevent duplicate processing
-            if not msg_id:
+            if not message_id:
                 continue
 
-            if msg_id in processed_message_ids:
+            if message_id in processed_message_ids:
                 continue
 
-            processed_message_ids[msg_id] = True
+            processed_message_ids[message_id] = True
 
-            # Keep memory bounded
-            if len(processed_message_ids) > 5000:
-                oldest_id = next(iter(processed_message_ids))
-                del processed_message_ids[oldest_id]
+            while len(processed_message_ids) > MAX_TRACKED_IDS:
+                processed_message_ids.popitem(last=False)
 
-            # Process the message
             process_message(message)
 
         next_page_token = chat_response.get("nextPageToken")
@@ -787,33 +887,34 @@ while time.time() - START_TIME < MAX_RUNTIME:
             chat_response.get("pollingIntervalMillis", 5000) / 1000
         )
 
-        time.sleep(polling_interval)
+        time.sleep(max(1, polling_interval))
 
     except HttpError as e:
 
         print("[YOUTUBE API ERROR]", e)
-
         time.sleep(5)
 
     except google.auth.exceptions.TransportError as e:
 
         print("[TRANSPORT ERROR]", e)
-
         time.sleep(10)
 
     except google.auth.exceptions.RefreshError as e:
 
         print("[TOKEN ERROR]", e)
-
         sys.exit(1)
+
+    except KeyboardInterrupt:
+
+        print("Bot stopped manually.")
+        break
 
     except Exception as e:
 
         print("[UNEXPECTED ERROR]", repr(e))
-
         time.sleep(5)
 
 
-print("=" * 60)
+print("=" * 68)
 print("BOT EXECUTION COMPLETED")
-print("=" * 60)
+print("=" * 68)
